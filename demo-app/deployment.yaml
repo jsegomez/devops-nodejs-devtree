@@ -47,8 +47,61 @@ spec:
               cpu: "500m"
               memory: "256Mi"
 
-          # ---------- ENV VARS (EDITABLE) ----------
+          # ---------- ENV VARS ----------
           env:
             - name: NODE_ENV
               value: "production"
-            # Agregar más si quieres...
+
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: MONGO_URI
+
+            - name: PORT
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: PORT
+
+            - name: DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: DATABASE_NAME
+
+            - name: ALLOWED_DOMAINS
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: ALLOWED_DOMAINS
+
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: JWT_SECRET
+
+            - name: CLOUDINARY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: CLOUDINARY_URL
+
+            - name: CLOUDINARY_CLOUD_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: CLOUDINARY_CLOUD_NAME
+
+            - name: CLOUDINARY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: CLOUDINARY_API_KEY
+
+            - name: CLOUDINARY_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: demo-app-secret
+                  key: CLOUDINARY_API_SECRET
