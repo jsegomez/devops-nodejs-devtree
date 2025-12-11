@@ -1,0 +1,56 @@
+# ================================
+# Kubernetes/YAML Manifests
+# ================================
+
+# Ignorar archivos específicos de salida/pruebas/temporales.
+# Puedes añadir aquí cualquier archivo YAML que se genere automáticamente.
+*.bak
+*.tmp
+_output/
+tests/output/
+
+# Ignorar archivos generados por herramientas comunes de K8s, como Helm, Kustomize, etc.
+# Si no usas estas herramientas, puedes omitir estas secciones.
+
+# Archivos de Kustomize
+# A menudo es bueno ignorar los archivos de salida/build que genera.
+kustomization.yaml.bak
+kustomize/
+build/
+overlays/*/kustomization.yaml.bak
+
+# Archivos de Helm (si no se versionan charts completos)
+# Generalmente, los charts completos se versionan. Esto es más para archivos temporales.
+charts/*/requirements.lock
+charts/*/Chart.lock
+tmp/
+
+# Archivos de Terraform (si se usa para K8s)
+# Si tu repo incluye Terraform, es crucial ignorar estos.
+.terraform/
+*.tfplan
+*.tfstate
+*.tfstate.backup
+
+# ================================
+# Credenciales y Secretos
+# ================================
+
+# Es CRUCIAL ignorar archivos que contengan credenciales sensibles.
+# Los secretos deben gestionarse a través de herramientas como Vault, Sealed Secrets,
+# o ser inyectados en tiempo de ejecución, NO versionados.
+
+# -- Tu solicitud específica --
+./demo-app/demo-app-secret.yaml
+
+# Patrones comunes de secretos y valores
+*secret*.yaml
+*secrets*.yaml
+*-cred*.yaml
+*-credentials*.yaml
+*-token*.yaml
+*-key*.yaml
+values-prod.yaml
+values-stage.yaml
+prod-config.yaml
+stage-config.yaml
