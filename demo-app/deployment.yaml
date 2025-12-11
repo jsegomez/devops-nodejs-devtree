@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: demo-app
-          image: jsegomez/demo-app:build-10
+          image: jsegomez/demo-app:build-11
           ports:
             - containerPort: 5000
 
