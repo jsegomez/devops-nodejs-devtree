@@ -4,6 +4,8 @@ pipeline {
     environment {
         VAULT_ADDR = 'http://vault.vault.svc.cluster.local:8200'
         NAMESPACE = 'demo-app'
+        KUBECTL_PATH = "${WORKSPACE}/kubectl"
+        JQ_PATH = "${WORKSPACE}/jq"
         // El token de Vault se obtiene desde credenciales en el stage correspondiente
     }
     
@@ -12,11 +14,30 @@ pipeline {
             steps {
                 script {
                     sh '''
+                        # Instalar kubectl si no está disponible
+                        if ! command -v kubectl &> /dev/null && [ ! -f "${KUBECTL_PATH}" ]; then
+                            echo "Instalando kubectl..."
+                            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                            chmod +x kubectl
+                            mv kubectl ${KUBECTL_PATH}
+                        fi
+                        
+                        # Instalar jq si no está disponible
+                        if ! command -v jq &> /dev/null && [ ! -f "${JQ_PATH}" ]; then
+                            echo "Instalando jq..."
+                            curl -L -o ${JQ_PATH} https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+                            chmod +x ${JQ_PATH}
+                        fi
+                        
+                        # Crear alias o usar directamente
+                        export KUBECTL_CMD=$(command -v kubectl || echo "${KUBECTL_PATH}")
+                        export JQ_CMD=$(command -v jq || echo "${JQ_PATH}")
+                        
                         # Verificar que estamos en Kubernetes
                         echo "Verificando acceso a Kubernetes..."
-                        kubectl cluster-info || echo "Kubectl no disponible, pero continuando..."
+                        ${KUBECTL_CMD} cluster-info || echo "Kubectl no disponible, pero continuando..."
                         
-                        # Verificar conexión con Vault usando curl (más simple que instalar CLI)
+                        # Verificar conexión con Vault usando curl
                         echo "Verificando acceso a Vault..."
                         curl -s ${VAULT_ADDR}/v1/sys/health || echo "Vault no está disponible todavía"
                     '''
@@ -51,14 +72,19 @@ pipeline {
                                 -H "X-Vault-Token: ${VAULT_TOKEN}" \
                                 ${VAULT_ADDR}/v1/secret/data/demo-app)
                             
-                            if echo "$SECRETS_JSON" | jq -e '.data.data' > /dev/null 2>&1; then
-                                echo "$SECRETS_JSON" | jq -r '.data.data | to_entries[] | (.key + "=" + .value)' > /tmp/secrets.env
+                            JQ_CMD=$(command -v jq || echo "${JQ_PATH}")
+                            if echo "$SECRETS_JSON" | ${JQ_CMD} -e '.data.data' > /dev/null 2>&1; then
+                                echo "$SECRETS_JSON" | ${JQ_CMD} -r '.data.data | to_entries[] | (.key + "=" + .value)' > /tmp/secrets.env
                                 echo "Secretos obtenidos: $(wc -l < /tmp/secrets.env) variables"
                             else
                                 echo "ERROR: No se pudieron obtener secretos"
                                 echo "Respuesta: $SECRETS_JSON"
                                 exit 1
                             fi
+                        else
+                            echo "ERROR: No se encontró el script auxiliar ni se pudo obtener secretos directamente"
+                            exit 1
+                        fi
                         '''
                     }
                 }
@@ -70,18 +96,19 @@ pipeline {
                 script {
                     echo 'Creando Secret de Kubernetes desde los secretos de Vault...'
                     sh '''
+                        KUBECTL_CMD=$(command -v kubectl || echo "${KUBECTL_PATH}")
                         # Crear el namespace si no existe
-                        kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        ${KUBECTL_CMD} create namespace ${NAMESPACE} --dry-run=client -o yaml | ${KUBECTL_CMD} apply -f -
                         
                         # Crear el Secret desde los valores obtenidos de Vault
                         # Leer los secretos y crear un Secret de Kubernetes
-                        kubectl create secret generic demo-app-secret \
+                        ${KUBECTL_CMD} create secret generic demo-app-secret \
                             --from-env-file=/tmp/secrets.env \
                             --namespace=${NAMESPACE} \
-                            --dry-run=client -o yaml | kubectl apply -f -
+                            --dry-run=client -o yaml | ${KUBECTL_CMD} apply -f -
                         
                         echo "Secret 'demo-app-secret' creado/actualizado en el namespace ${NAMESPACE}"
-                        kubectl get secret demo-app-secret -n ${NAMESPACE}
+                        ${KUBECTL_CMD} get secret demo-app-secret -n ${NAMESPACE}
                     '''
                 }
             }
@@ -94,20 +121,21 @@ pipeline {
                     dir('demo-app') {
                         // Aplicar manifiestos en orden específico
                         sh '''
+                            KUBECTL_CMD=$(command -v kubectl || echo "${KUBECTL_PATH}")
                             echo "Aplicando namespace..."
-                            kubectl apply -f namespace.yaml
+                            ${KUBECTL_CMD} apply -f namespace.yaml
                             
                             echo "Esperando a que el namespace esté listo..."
                             sleep 2
                             
                             echo "Aplicando deployment..."
-                            kubectl apply -f deployment.yaml
+                            ${KUBECTL_CMD} apply -f deployment.yaml
                             
                             echo "Aplicando service..."
-                            kubectl apply -f service.yaml
+                            ${KUBECTL_CMD} apply -f service.yaml
                             
                             echo "Aplicando HPA..."
-                            kubectl apply -f hpa.yaml
+                            ${KUBECTL_CMD} apply -f hpa.yaml
                         '''
                     }
                 }
@@ -119,20 +147,21 @@ pipeline {
                 script {
                     echo 'Verificando estado del despliegue...'
                     sh '''
+                        KUBECTL_CMD=$(command -v kubectl || echo "${KUBECTL_PATH}")
                         echo "Verificando pods..."
-                        kubectl get pods -n ${NAMESPACE} -w --timeout=120s || true
+                        ${KUBECTL_CMD} get pods -n ${NAMESPACE} -w --timeout=120s || true
                         
                         echo ""
                         echo "Estado de los recursos:"
-                        kubectl get all -n ${NAMESPACE}
+                        ${KUBECTL_CMD} get all -n ${NAMESPACE}
                         
                         echo ""
                         echo "Verificando que el deployment esté listo..."
-                        kubectl wait --for=condition=available --timeout=120s deployment/demo-app -n ${NAMESPACE} || true
+                        ${KUBECTL_CMD} wait --for=condition=available --timeout=120s deployment/demo-app -n ${NAMESPACE} || true
                         
                         echo ""
                         echo "Estado final del deployment:"
-                        kubectl describe deployment demo-app -n ${NAMESPACE}
+                        ${KUBECTL_CMD} describe deployment demo-app -n ${NAMESPACE}
                     '''
                 }
             }
@@ -144,10 +173,11 @@ pipeline {
             echo 'Pipeline ejecutado exitosamente'
             script {
                 sh '''
+                    KUBECTL_CMD=$(command -v kubectl || echo "${KUBECTL_PATH}")
                     echo "=========================================="
                     echo "Despliegue completado exitosamente"
                     echo "=========================================="
-                    kubectl get all -n ${NAMESPACE}
+                    ${KUBECTL_CMD} get all -n ${NAMESPACE}
                 '''
             }
         }
@@ -155,16 +185,17 @@ pipeline {
             echo 'Pipeline falló'
             script {
                 sh '''
+                    KUBECTL_CMD=$(command -v kubectl || echo "${KUBECTL_PATH}")
                     echo "=========================================="
                     echo "Despliegue falló. Revisa los logs:"
                     echo "=========================================="
-                    kubectl get pods -n ${NAMESPACE}
-                    kubectl logs -n ${NAMESPACE} -l app=demo-app --tail=50 || true
+                    ${KUBECTL_CMD} get pods -n ${NAMESPACE}
+                    ${KUBECTL_CMD} logs -n ${NAMESPACE} -l app=demo-app --tail=50 || true
                 '''
             }
         }
         always {
-            cleanWs()
+            deleteDir()
         }
     }
 }
