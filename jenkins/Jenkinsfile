@@ -1,0 +1,170 @@
+pipeline {
+    agent any
+    
+    environment {
+        VAULT_ADDR = 'http://vault.vault.svc.cluster.local:8200'
+        NAMESPACE = 'demo-app'
+        // El token de Vault se obtiene desde credenciales en el stage correspondiente
+    }
+    
+    stages {
+        stage('Preparar entorno') {
+            steps {
+                script {
+                    sh '''
+                        # Verificar que estamos en Kubernetes
+                        echo "Verificando acceso a Kubernetes..."
+                        kubectl cluster-info || echo "Kubectl no disponible, pero continuando..."
+                        
+                        # Verificar conexión con Vault usando curl (más simple que instalar CLI)
+                        echo "Verificando acceso a Vault..."
+                        curl -s ${VAULT_ADDR}/v1/sys/health || echo "Vault no está disponible todavía"
+                    '''
+                }
+            }
+        }
+        
+        stage('Obtener secretos de Vault') {
+            steps {
+                withCredentials([string(credentialsId: 'vault-jenkins-token', variable: 'VAULT_TOKEN')]) {
+                    script {
+                        echo 'Conectando a Vault y obteniendo secretos...'
+                        sh '''
+                            # Verificar que el token está disponible
+                            if [ -z "${VAULT_TOKEN}" ]; then
+                                echo "ERROR: VAULT_TOKEN no configurado"
+                                echo "Por favor configura la credencial 'vault-jenkins-token' en Jenkins:"
+                                echo "  Jenkins > Manage Jenkins > Credentials > Add > Secret text"
+                                echo "  ID: vault-jenkins-token"
+                                echo "  Secret: [tu token de Vault]"
+                                exit 1
+                            fi
+                        
+                        # Usar script auxiliar o ejecutar directamente
+                        if [ -f "jenkins/scripts/get-vault-secrets.sh" ]; then
+                            bash jenkins/scripts/get-vault-secrets.sh
+                        else
+                            # Método directo usando curl
+                            echo "Obteniendo secretos de secret/data/demo-app usando curl..."
+                            
+                            SECRETS_JSON=$(curl -s \
+                                -H "X-Vault-Token: ${VAULT_TOKEN}" \
+                                ${VAULT_ADDR}/v1/secret/data/demo-app)
+                            
+                            if echo "$SECRETS_JSON" | jq -e '.data.data' > /dev/null 2>&1; then
+                                echo "$SECRETS_JSON" | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"' > /tmp/secrets.env
+                                echo "Secretos obtenidos: $(wc -l < /tmp/secrets.env) variables"
+                            else
+                                echo "ERROR: No se pudieron obtener secretos"
+                                echo "Respuesta: $SECRETS_JSON"
+                                exit 1
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Crear Secret de Kubernetes') {
+            steps {
+                script {
+                    echo 'Creando Secret de Kubernetes desde los secretos de Vault...'
+                    sh '''
+                        # Crear el namespace si no existe
+                        kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        # Crear el Secret desde los valores obtenidos de Vault
+                        # Leer los secretos y crear un Secret de Kubernetes
+                        kubectl create secret generic demo-app-secret \
+                            --from-env-file=/tmp/secrets.env \
+                            --namespace=${NAMESPACE} \
+                            --dry-run=client -o yaml | kubectl apply -f -
+                        
+                        echo "Secret 'demo-app-secret' creado/actualizado en el namespace ${NAMESPACE}"
+                        kubectl get secret demo-app-secret -n ${NAMESPACE}
+                    '''
+                }
+            }
+        }
+        
+        stage('Desplegar manifiestos') {
+            steps {
+                script {
+                    echo 'Desplegando manifiestos de Kubernetes...'
+                    dir('demo-app') {
+                        // Aplicar manifiestos en orden específico
+                        sh '''
+                            echo "Aplicando namespace..."
+                            kubectl apply -f namespace.yaml
+                            
+                            echo "Esperando a que el namespace esté listo..."
+                            sleep 2
+                            
+                            echo "Aplicando deployment..."
+                            kubectl apply -f deployment.yaml
+                            
+                            echo "Aplicando service..."
+                            kubectl apply -f service.yaml
+                            
+                            echo "Aplicando HPA..."
+                            kubectl apply -f hpa.yaml
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Verificar despliegue') {
+            steps {
+                script {
+                    echo 'Verificando estado del despliegue...'
+                    sh '''
+                        echo "Verificando pods..."
+                        kubectl get pods -n ${NAMESPACE} -w --timeout=120s || true
+                        
+                        echo ""
+                        echo "Estado de los recursos:"
+                        kubectl get all -n ${NAMESPACE}
+                        
+                        echo ""
+                        echo "Verificando que el deployment esté listo..."
+                        kubectl wait --for=condition=available --timeout=120s deployment/demo-app -n ${NAMESPACE} || true
+                        
+                        echo ""
+                        echo "Estado final del deployment:"
+                        kubectl describe deployment demo-app -n ${NAMESPACE}
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Pipeline ejecutado exitosamente'
+            script {
+                sh '''
+                    echo "=========================================="
+                    echo "Despliegue completado exitosamente"
+                    echo "=========================================="
+                    kubectl get all -n ${NAMESPACE}
+                '''
+            }
+        }
+        failure {
+            echo 'Pipeline falló'
+            script {
+                sh '''
+                    echo "=========================================="
+                    echo "Despliegue falló. Revisa los logs:"
+                    echo "=========================================="
+                    kubectl get pods -n ${NAMESPACE}
+                    kubectl logs -n ${NAMESPACE} -l app=demo-app --tail=50 || true
+                '''
+            }
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-config
+  namespace: jenkins
+data:
+  plugins.txt: |
+    kubernetes:4241.v0df7f0a_6e67a
+    workflow-aggregator:596.v8c21c963d92d
+    git:5.4.0
+    pipeline-stage-view:2.31
+    blueocean:1.27.5
+    vault:4.2.0
