@@ -73,28 +73,20 @@ pipeline {
                                 exit 1
                             fi
                         
-                        # Usar script auxiliar o ejecutar directamente
-                        if [ -f "jenkins/scripts/get-vault-secrets.sh" ]; then
-                            bash jenkins/scripts/get-vault-secrets.sh
+                        # Método directo usando curl
+                        echo "Obteniendo secretos de secret/data/demo-app usando curl..."
+                        
+                        SECRETS_JSON=$(curl -s \
+                            -H "X-Vault-Token: ${VAULT_TOKEN}" \
+                            ${VAULT_ADDR}/v1/secret/data/demo-app)
+                        
+                        JQ_CMD=$(command -v jq 2>/dev/null || echo "${JQ_PATH}")
+                        if echo "$SECRETS_JSON" | ${JQ_CMD} -e '.data.data' > /dev/null 2>&1; then
+                            echo "$SECRETS_JSON" | ${JQ_CMD} -r '.data.data | to_entries[] | (.key + "=" + .value)' > /tmp/secrets.env
+                            echo "Secretos obtenidos: $(wc -l < /tmp/secrets.env) variables"
                         else
-                            # Método directo usando curl
-                            echo "Obteniendo secretos de secret/data/demo-app usando curl..."
-                            
-                            SECRETS_JSON=$(curl -s \
-                                -H "X-Vault-Token: ${VAULT_TOKEN}" \
-                                ${VAULT_ADDR}/v1/secret/data/demo-app)
-                            
-                            JQ_CMD=$(command -v jq 2>/dev/null || echo "${JQ_PATH}")
-                            if echo "$SECRETS_JSON" | ${JQ_CMD} -e '.data.data' > /dev/null 2>&1; then
-                                echo "$SECRETS_JSON" | ${JQ_CMD} -r '.data.data | to_entries[] | (.key + "=" + .value)' > /tmp/secrets.env
-                                echo "Secretos obtenidos: $(wc -l < /tmp/secrets.env) variables"
-                            else
-                                echo "ERROR: No se pudieron obtener secretos"
-                                echo "Respuesta: $SECRETS_JSON"
-                                exit 1
-                            fi
-                        else
-                            echo "ERROR: No se encontró el script auxiliar ni se pudo obtener secretos directamente"
+                            echo "ERROR: No se pudieron obtener secretos"
+                            echo "Respuesta: $SECRETS_JSON"
                             exit 1
                         fi
                         '''
@@ -226,7 +218,8 @@ pipeline {
             }
         }
         always {
-            deleteDir()
+            // No limpiar el workspace para que kubectl esté disponible en post actions
+            // deleteDir()
         }
     }
 }
