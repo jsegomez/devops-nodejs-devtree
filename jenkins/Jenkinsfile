@@ -218,8 +218,8 @@ pipeline {
             }
         }
         always {
+            echo 'Pipeline finalizado'
             // No limpiar el workspace para que kubectl esté disponible en post actions
-            // deleteDir()
         }
     }
 }
