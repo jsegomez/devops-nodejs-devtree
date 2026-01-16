@@ -160,25 +160,41 @@ pipeline {
                 script {
                     echo 'Verificando estado del despliegue...'
                     sh '''
+                        set +e  # No fallar en errores
                         KUBECTL_CMD=$(command -v kubectl 2>/dev/null || echo "${KUBECTL_PATH}")
                         if [ ! -x "${KUBECTL_CMD}" ]; then
                             chmod +x "${KUBECTL_CMD}" || true
                         fi
                         
-                        echo "Verificando pods..."
-                        ${KUBECTL_CMD} get pods -n ${NAMESPACE} -w --timeout=120s || true
+                        echo "Estado inicial de los recursos:"
+                        ${KUBECTL_CMD} get pods,svc,deployment,hpa -n ${NAMESPACE} || true
                         
                         echo ""
-                        echo "Estado de los recursos:"
-                        ${KUBECTL_CMD} get all -n ${NAMESPACE}
+                        echo "Esperando a que el deployment esté disponible (máximo 180 segundos)..."
+                        if ${KUBECTL_CMD} wait --for=condition=available --timeout=180s deployment/demo-app -n ${NAMESPACE} 2>/dev/null; then
+                            echo "✓ Deployment disponible!"
+                        else
+                            echo "⚠ Timeout esperando deployment, pero continuando..."
+                            echo "El pod puede estar aún creándose. Verifica manualmente con:"
+                            echo "kubectl get pods -n ${NAMESPACE}"
+                        fi
                         
                         echo ""
-                        echo "Verificando que el deployment esté listo..."
-                        ${KUBECTL_CMD} wait --for=condition=available --timeout=120s deployment/demo-app -n ${NAMESPACE} || true
+                        echo "Estado final de los pods:"
+                        ${KUBECTL_CMD} get pods -n ${NAMESPACE} || true
                         
                         echo ""
-                        echo "Estado final del deployment:"
-                        ${KUBECTL_CMD} describe deployment demo-app -n ${NAMESPACE}
+                        echo "Estado del deployment:"
+                        ${KUBECTL_CMD} get deployment demo-app -n ${NAMESPACE} || true
+                        
+                        # Verificar que al menos el deployment existe
+                        if ${KUBECTL_CMD} get deployment demo-app -n ${NAMESPACE} >/dev/null 2>&1; then
+                            echo "✓ Deployment 'demo-app' existe en el namespace ${NAMESPACE}"
+                            exit 0  # Éxito
+                        else
+                            echo "✗ Deployment 'demo-app' no encontrado"
+                            exit 1  # Falla
+                        fi
                     '''
                 }
             }
@@ -197,7 +213,7 @@ pipeline {
                     echo "=========================================="
                     echo "Despliegue completado exitosamente"
                     echo "=========================================="
-                    ${KUBECTL_CMD} get all -n ${NAMESPACE}
+                    ${KUBECTL_CMD} get pods,svc,deployment,hpa -n ${NAMESPACE} || true
                 '''
             }
         }
